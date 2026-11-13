@@ -39,7 +39,7 @@ Spring Cloud / Node.js 后端）通过 HTTP/SSE 集成调用。
 1. **多智能体编排**：CrewAI 双 Agent（意图识别官 → 客服执行员）顺序协作，多工具编排；
    未安装或调用失败时自动降级到等价的内置 LangChain 路由，保证服务可用性。
 2. **RAG 检索链路**：PDF/Word/Markdown 解析 → 分块 → 向量 + BM25 双路索引 → RRF 融合 →
-   bge-reranker 重排 → 检索增强生成；内置对照实验证明混合检索收益（vector 67% → hybrid 98% 命中）。
+   bge-reranker 重排 → 检索增强生成；内置对照实验可验证混合检索收益（`scripts/bench_retrieval.py` 可复现）。
 3. **工程化配套**：会话记忆、SSE 流式、tenacity 重试、滑动窗口限流、语义缓存、链路追踪、
    RAGAS 评测集、Docker 一键部署与 CI 门禁——每一层都可观测、可评估、可替换。
 
@@ -51,7 +51,7 @@ Spring Cloud / Node.js 后端）通过 HTTP/SSE 集成调用。
 | 流式对话 | SSE 逐 token 输出，缓存命中整段秒回 | `POST /api/v1/chat/stream` |
 | 多智能体 | CrewAI 意图识别官 → 客服执行员，失败自动降级 | `app/agents/crew.py` |
 | 知识库问答 | 启动自动导入示例库，支持 PDF/DOCX/MD/TXT 上传入库 | `POST /api/v1/ingest` |
-| 工具集成 | 订单查询（Mock，可对接真实系统）、售后规则 | `app/agents/tools.py` |
+| 工具集成 | 运单查询（Mock，可对接真实系统）、理赔规则 | `app/agents/tools.py` |
 | 稳定性 | 重试 / 限流 / 语义缓存三重保障 | `app/services/*` |
 | 可观测性 | 实时监控控制台（含用户模拟对话与全链路可视化）、请求链路追踪、运行指标 | `/dashboard`、`/api/v1/traces`、`/api/v1/stats` |
 | 效果评估 | RAGAS 四指标 + LLM-as-Judge + 52 条评测集 | `eval/run_eval.py` |
@@ -61,7 +61,7 @@ Spring Cloud / Node.js 后端）通过 HTTP/SSE 集成调用。
 
 ### 1. 智能对话服务（app/services/chat.py）
 
-- **意图路由**：LLM 将用户消息分类为 `knowledge`（知识问答）/ `order`（订单查询）/ `chat`（闲聊），
+- **意图路由**：LLM 将用户消息分类为 `knowledge`（知识问答）/ `order`（运单查询）/ `chat`（闲聊），
   分类结果 JSON 解析失败时兜底为 `chat`，保证不中断服务。
 - **多轮会话记忆**：`session_id` 维度隔离（`InMemoryChatMessageHistory`），
   每个会话保留最近 `AIROBOT_MEMORY_MAX_TURNS` 轮、生成时带入最近 `AIROBOT_MEMORY_RETRIEVE_TURNS` 轮，
@@ -77,8 +77,8 @@ Spring Cloud / Node.js 后端）通过 HTTP/SSE 集成调用。
   `Process.sequential` 顺序执行，结构为 `Agent(角色/目标/背景/工具/LLM) + Task + Crew`。
 - **工具集**（app/agents/tools.py，同时提供原始函数与 CrewAI `@tool` 包装）：
   - `search_knowledge`：RAG 检索增强生成（调知识库）
-  - `query_order`：订单/物流查询（当前 Mock，生产通过 HTTP 对接 order-server，见"设计决策"）
-  - `after_sale_rule`：售后与退货规则
+  - `query_order`：运单/物流轨迹查询（当前 Mock，生产通过 HTTP 对接 order-server，见"设计决策"）
+  - `after_sale_rule`：理赔与售后规则
 - **可用性保障**：`crewai` 未安装时 `CREW_TOOLS_READY=false`，自动切换内置路由；
   运行时异常同样降级，`/api/v1/stats` 的 `crew_available` 可观测状态。
 
@@ -170,7 +170,7 @@ FastAPI (app/main.py)
       ──▶ 语义缓存检查（仅首轮无上下文：embedding → 双门限；命中直接返回）
       ──▶ 意图分类（LLM：knowledge/order/chat）
       ──▶ 执行：knowledge → 混合检索(向量+BM25→RRF→重排) → RAG 生成
-              order     → 订单工具（Mock/HTTP）
+              order     → 运单工具（Mock/HTTP）
               chat      → LLM 闲聊
       ──▶ 写会话记忆 + 写语义缓存（知识类） + 记录链路追踪
       ──▶ 200 JSON {reply, intent, sources, engine, cache_hit}
@@ -184,7 +184,7 @@ FastAPI (app/main.py)
 |---|---|---|
 | 限流 | 门口保安：同时放进来的人数有上限，超了先等着（429） | `app/services/ratelimit.py` |
 | 语义缓存 | 前台的常见问题卡：同样的问题刚答过，直接把卡片递过去，不用往后传 | `app/services/semantic_cache.py` |
-| 意图识别 | 分诊台：判断你是问规则（knowledge）、查订单（order）还是闲聊（chat） | `app/services/chat.py` |
+| 意图识别 | 分诊台：判断你是问规则（knowledge）、查运单（order）还是闲聊（chat） | `app/services/chat.py` |
 | 混合检索 | 两个图书管理员同时找资料：一个按"意思相近"找（向量），一个按"字面关键词"找（BM25） | `app/rag/retriever.py` + `lexical.py` |
 | RRF 融合 | 把两份推荐书单合成一份，两边都推荐的排前面 | `app/rag/fusion.py` |
 | 重排 | 资深馆员把合并后的书单逐本翻看，重新挑出最相关的几本 | `app/rag/reranker.py` |
@@ -257,7 +257,7 @@ AIROBOT_EMBEDDING_MODEL=nomic-embed-text
 uvicorn app.main:app --reload --port 8000
 ```
 
-启动时自动导入 `data/knowledge_base.md`（示例知识库，7 个分块）。
+启动时自动导入 `data/knowledge_base.md`（物流客服示例知识库，8 个主题分块）。
 
 ### 4. 验证
 
@@ -269,7 +269,7 @@ Invoke-RestMethod http://localhost:8000/health
 Invoke-RestMethod http://localhost:8000/api/v1/stats
 
 # 知识问答（RAG）
-$body = @{ message = "怎么申请退款？"; session_id = "user-001" } | ConvertTo-Json
+$body = @{ message = "物流三天没更新了怎么办？"; session_id = "user-001" } | ConvertTo-Json
 Invoke-RestMethod -Uri http://localhost:8000/api/v1/chat -Method Post -Body $body -ContentType "application/json"
 ```
 
@@ -291,7 +291,7 @@ Invoke-RestMethod -Uri http://localhost:8000/api/v1/chat -Method Post -Body $bod
 
 ```json
 {
-  "message": "退货运费谁承担？",
+  "message": "快递丢了怎么赔偿？",
   "session_id": "user-001"
 }
 ```
@@ -305,9 +305,9 @@ Invoke-RestMethod -Uri http://localhost:8000/api/v1/chat -Method Post -Body $bod
 
 ```json
 {
-  "reply": "根据平台规则，因商品质量问题或与描述不符导致的退货，运费由卖家承担；买家个人原因退货则由买家承担。",
+  "reply": "已保价运单按保价金额与损失比例赔付；未保价运单按实际支付运费的 3 倍赔付，单票最高不超过 1000 元。物流信息超过 72 小时未更新且催查确认无法找回的，视为丢失。",
   "intent": "knowledge",
-  "sources": ["knowledge_base.md#4", "knowledge_base.md#3"],
+  "sources": ["knowledge_base.md#2"],
   "engine": "langchain",
   "used_crew": false,
   "cache_hit": false
@@ -317,7 +317,7 @@ Invoke-RestMethod -Uri http://localhost:8000/api/v1/chat -Method Post -Body $bod
 | 字段 | 说明 |
 |---|---|
 | reply | 客服回答 |
-| intent | `knowledge`（知识问答）/ `order`（订单）/ `chat`（闲聊）/ `crew`（多智能体） |
+| intent | `knowledge`（知识问答）/ `order`（运单）/ `chat`（闲聊）/ `crew`（多智能体） |
 | sources | RAG 来源列表（`文件#分块号`），非知识问答为空 |
 | engine | `langchain`（内置路由）/ `crew`（多智能体） |
 | used_crew | 本次是否实际走 CrewAI |
@@ -338,11 +338,11 @@ data: {"type":"stage","stage":"retrieval","msg":"混合检索完成","ms":2138.1
        "detail":{"vector_ms":22.2,"vector_hits":7,"bm25_ms":0.1,"bm25_hits":6,
                  "fusion_ms":0.0,"fused":7,"rerank_ms":2115.4,"rerank_enabled":true},
        "sources":["knowledge_base.md#0"],"ok":true}
-data: {"type":"token","content":"根据平台规则，"}
-data: {"type":"token","content":"因商品质量问题..."}
+data: {"type":"token","content":"根据理赔规则，"}
+data: {"type":"token","content":"已保价运单按保价金额与损失比例赔付..."}
 ...
 data: {"type":"stage","stage":"generate","msg":"RAG 生成完成（53 tokens）","ms":517.4,"ok":true}
-data: {"type":"done","intent":"knowledge","sources":["knowledge_base.md#4"],"total_ms":3225.6}
+data: {"type":"done","intent":"knowledge","sources":["knowledge_base.md#2"],"total_ms":3225.6}
 ```
 
 - `stage` 事件携带各阶段状态 / 耗时 / 明细：检索阶段细分向量 / BM25 / RRF / 重排耗时与命中数，供控制台全链路可视化
@@ -359,7 +359,7 @@ curl.exe -X POST http://localhost:8000/api/v1/ingest -F "file=@data/knowledge_ba
 ```
 
 ```json
-{"file_name": "knowledge_base.md", "chunks": 7, "total_chunks": 14}
+{"file_name": "knowledge_base.md", "chunks": 8, "total_chunks": 8}
 ```
 
 ### GET /api/v1/stats
@@ -453,7 +453,7 @@ python scripts\bench_splitter.py --top-k 3      # 不同分块参数的检索命
 python scripts\ingest.py data\knowledge_base.md # CLI 导入知识文件（独立进程）
 ```
 
-参考实测（52 条评测集，top-k=2）：vector 67% → bm25 98% / hybrid_rrf 98%，证明混合检索必要性。
+在 52 条评测集上运行对比（top-k 可调）：混合检索（RRF）命中率显著高于单路向量，验证混合检索的必要性；重排进一步改善候选排序质量。
 
 ## 设计决策
 

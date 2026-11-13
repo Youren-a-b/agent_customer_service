@@ -22,15 +22,15 @@ def test_semantic_cache_double_gate():
     cache = SemanticCache(threshold=0.75, lexical_threshold=0.5)
     vec_a = [1.0, 0.0, 0.0]
     vec_b = [0.8, 0.6, 0.0]  # 与 vec_a 余弦 = 0.8 >= 0.75
-    cache.put(vec_a, {"reply": "运费由卖家承担", "intent": "knowledge"}, "七天无理由退货怎么申请")
+    cache.put(vec_a, {"reply": "按保价金额赔付", "intent": "knowledge"}, "保价快递丢失怎么申请理赔")
 
-    hit = cache.get(vec_b, "无理由退货如何申请")
-    assert hit is not None and hit["reply"] == "运费由卖家承担"
+    hit = cache.get(vec_b, "保价快递丢失如何申请理赔")
+    assert hit is not None and hit["reply"] == "按保价金额赔付"
 
     # 向量相似但词面零重叠 -> 拒
     assert cache.get(vec_b, "今天天气怎么样") is None
-    # 向量不相似（同为运费问题）-> 拒
-    assert cache.get([0.0, 1.0, 0.0], "七天无理由退货怎么申请") is None
+    # 向量不相似（同为理赔问题）-> 拒
+    assert cache.get([0.0, 1.0, 0.0], "保价快递丢失怎么申请理赔") is None
 
 
 def test_semantic_cache_stats():
@@ -49,11 +49,11 @@ def test_semantic_cache_second_best_candidate():
     """余弦最高的候选词面不合格时，应继续检查其余候选（回归：SSE 缓存未命中）。"""
     cache = SemanticCache(threshold=0.75, lexical_threshold=0.5)
     # 与查询余弦最高（0.985）但词面零重叠 -> 应被跳过
-    cache.put([1.0, 0.0, 0.0], {"reply": "运费答案"}, "退货的运费谁承担")
+    cache.put([1.0, 0.0, 0.0], {"reply": "运费答案"}, "体积重量怎么计算")
     # 余弦次高（0.854）且词面重叠 0.8 -> 应命中
-    cache.put([0.75, 0.661, 0.0], {"reply": "退货答案"}, "七天无理由退货怎么申请")
-    hit = cache.get([0.985, 0.174, 0.0], "无理由退货如何申请")
-    assert hit is not None and hit["reply"] == "退货答案"
+    cache.put([0.75, 0.661, 0.0], {"reply": "理赔答案"}, "保价快递丢失怎么申请理赔")
+    hit = cache.get([0.985, 0.174, 0.0], "快递丢失如何申请理赔")
+    assert hit is not None and hit["reply"] == "理赔答案"
 
 
 def test_ratelimit_sliding_window():
